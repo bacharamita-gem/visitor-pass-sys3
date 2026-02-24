@@ -1,0 +1,566 @@
+// ================================================
+// VISITOR PASS SYSTEM - GEM DRYTECH SYSTEMS LLP
+// Google Apps Script Backend
+// ================================================
+
+// CONFIGURATION
+const CONFIG = {
+  // Replace with your Google Sheet ID
+  sheetId: '1KQm_oUO1Vt01ZWD8c7YSvkW6ngdrbi5IVGEKdYGJBmM',
+  
+  // Sheet names
+  mainSheet: 'VisitorData',
+  
+  // Visitor ID configuration
+  idConfig: {
+    prefix: 'GD',
+    numberLength: 3
+  },
+  
+  // System settings
+  timeZone: 'Asia/Kolkata',
+  photoFolderName: 'Visitor_Photos',
+  companyName: 'Gem Drytech Systems LLP'
+};
+
+// ================================================
+// 1. SETUP FUNCTIONS
+// ================================================
+
+/**
+ * Initial system setup
+ */
+function setupSystem() {
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.sheetId);
+    let visitorSheet = ss.getSheetByName(CONFIG.mainSheet);
+    
+    if (!visitorSheet) {
+      visitorSheet = ss.insertSheet(CONFIG.mainSheet);
+      
+      // Create headers - Updated to include Photo Drive URL
+      const headers = [
+        'Visitor ID',          // A
+        'Visitor Name',        // B
+        'Company Name',        // C
+        'Contact Number',      // D
+        'Visitor Address',     // E
+        'Person to Meet',      // F
+        'Area to Visit',       // G
+        'Purpose',             // H
+        'Date',                // I
+        'In Time',             // J
+        'Out Time',            // K
+        'Status',              // L
+        'Timestamp',           // M
+        'Photo Available',     // N
+        'Photo Drive URL',     // O  <- NEW COLUMN
+        'Checkout Date',       // P  <- NEW COLUMN
+        'Checkout Time'        // Q  <- NEW COLUMN
+      ];
+      
+      // Set headers with formatting
+      visitorSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      const headerRange = visitorSheet.getRange(1, 1, 1, headers.length);
+      headerRange.setBackground('#2c3e50')
+                .setFontColor('white')
+                .setFontWeight('bold');
+      
+      // Freeze header row
+      visitorSheet.setFrozenRows(1);
+      
+      // Set column widths
+      const columnWidths = [120, 180, 180, 120, 200, 150, 150, 200, 100, 90, 90, 100, 150, 100, 250, 100, 90];
+      for (let i = 0; i < columnWidths.length; i++) {
+        visitorSheet.setColumnWidth(i + 1, columnWidths[i]);
+      }
+      
+      Logger.log('System setup completed');
+    }
+    
+    return {
+      success: true,
+      message: 'System ready'
+    };
+    
+  } catch (error) {
+    Logger.log('Setup error: ' + error.toString());
+    return {
+      success: false,
+      message: 'Error: ' + error.toString()
+    };
+  }
+}
+
+// ================================================
+// 2. MAIN FORM PROCESSING
+// ================================================
+
+/**
+ * Process form submission
+ */
+function processForm(formData) {
+  try {
+    console.log('Starting form processing');
+    console.log('Form data received:', JSON.stringify(formData));
+    
+    // Simple validation
+    if (!formData.visitorName || formData.visitorName.trim() === '') {
+      return {
+        success: false,
+        message: 'Visitor name is required',
+        errors: ['Visitor name is required']
+      };
+    }
+    
+    if (!formData.companyName || formData.companyName.trim() === '') {
+      return {
+        success: false,
+        message: 'Company name is required',
+        errors: ['Company name is required']
+      };
+    }
+    
+    if (!formData.contactNumber || formData.contactNumber.trim() === '') {
+      return {
+        success: false,
+        message: 'Contact number is required',
+        errors: ['Contact number is required']
+      };
+    }
+    
+    if (!formData.personToMeet || formData.personToMeet.trim() === '') {
+      return {
+        success: false,
+        message: 'Person to meet is required',
+        errors: ['Person to meet is required']
+      };
+    }
+    
+    if (!formData.areaToVisit || formData.areaToVisit.trim() === '') {
+      return {
+        success: false,
+        message: 'Area to visit is required',
+        errors: ['Area to visit is required']
+      };
+    }
+    
+    if (!formData.purpose || formData.purpose.trim() === '') {
+      return {
+        success: false,
+        message: 'Purpose is required',
+        errors: ['Purpose is required']
+      };
+    }
+    
+    console.log('Validation passed');
+    
+    // Setup system if needed
+    setupSystem();
+    
+    // Open spreadsheet
+    const ss = SpreadsheetApp.openById(CONFIG.sheetId);
+    const visitorSheet = ss.getSheetByName(CONFIG.mainSheet);
+    
+    if (!visitorSheet) {
+      throw new Error('Visitor sheet not found');
+    }
+    
+    console.log('Spreadsheet opened');
+    
+    // Generate visitor ID
+    const visitorId = generateVisitorId(visitorSheet);
+    
+    // Get current date and time
+    const now = new Date();
+    const dateStr = Utilities.formatDate(now, CONFIG.timeZone, 'dd/MM/yyyy');
+    const timeStr = Utilities.formatDate(now, CONFIG.timeZone, 'HH:mm');
+    const timestamp = Utilities.formatDate(now, CONFIG.timeZone, 'dd/MM/yyyy HH:mm:ss');
+    
+    console.log('Generated ID:', visitorId, 'Date:', dateStr, 'Time:', timeStr);
+    
+    // Process photo if provided
+    let photoAvailable = 'No';
+    let photoDriveUrl = '';
+    
+    if (formData.photo && formData.photo.length > 100) {
+      try {
+        const photoInfo = saveVisitorPhoto(visitorId, formData.photo);
+        photoAvailable = 'Yes';
+        photoDriveUrl = photoInfo.fileUrl || '';
+        console.log('Photo saved successfully. URL:', photoDriveUrl);
+      } catch (photoError) {
+        console.warn('Photo save failed:', photoError);
+        photoAvailable = 'Failed';
+        photoDriveUrl = 'Error saving photo';
+      }
+    }
+    
+    // Prepare row data - Updated to include Photo Drive URL
+    const rowData = [
+      visitorId,                          // A - Visitor ID
+      formData.visitorName.trim(),        // B - Visitor Name
+      formData.companyName.trim(),        // C - Company Name
+      formData.contactNumber.trim(),      // D - Contact Number
+      formData.visitorAddress ? formData.visitorAddress.trim() : '',  // E - Visitor Address
+      formData.personToMeet.trim(),       // F - Person to Meet
+      formData.areaToVisit.trim(),        // G - Area to Visit
+      formData.purpose.trim(),            // H - Purpose
+      dateStr,                            // I - Date
+      timeStr,                            // J - In Time
+      '',                                 // K - Out Time
+      'Active',                           // L - Status
+      timestamp,                          // M - Timestamp
+      photoAvailable,                     // N - Photo Available
+      photoDriveUrl,                      // O - Photo Drive URL (NEW)
+      '',                                 // P - Checkout Date (NEW)
+      ''                                  // Q - Checkout Time (NEW)
+    ];
+    
+    console.log('Appending row data:', rowData);
+    
+    // Append to sheet
+    visitorSheet.appendRow(rowData);
+    
+    // Auto-fit the Photo Drive URL column for better visibility
+    visitorSheet.autoResizeColumn(15); // Column O
+    
+    console.log('Row appended successfully');
+    
+    return {
+      success: true,
+      visitorId: visitorId,
+      date: dateStr,
+      time: timeStr,
+      timestamp: timestamp,
+      photoDriveUrl: photoDriveUrl,
+      message: 'Visitor pass created successfully'
+    };
+    
+  } catch (error) {
+    console.error('Error in processForm:', error.toString());
+    console.error('Stack trace:', error.stack);
+    
+    return {
+      success: false,
+      message: 'Error processing form: ' + error.message,
+      error: error.toString()
+    };
+  }
+}
+
+// ================================================
+// 3. VISITOR ID GENERATION
+// ================================================
+
+/**
+ * Generate unique visitor ID
+ */
+function generateVisitorId(sheet) {
+  const now = new Date();
+  const datePart = Utilities.formatDate(now, CONFIG.timeZone, 'ddMMyy');
+  const baseId = CONFIG.idConfig.prefix + datePart;
+  
+  const lastRow = sheet.getLastRow();
+  let nextNumber = 1;
+  
+  if (lastRow > 1) {
+    // Get all visitor IDs (column 1)
+    const visitorIds = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    
+    // Filter IDs for today
+    const todayIds = visitorIds.filter(row => {
+      const id = row[0];
+      return id && id.toString().startsWith(baseId);
+    });
+    
+    if (todayIds.length > 0) {
+      // Extract numbers from today's IDs
+      const numbers = todayIds.map(row => {
+        const idStr = row[0].toString();
+        const numPart = idStr.substring(idStr.length - CONFIG.idConfig.numberLength);
+        return parseInt(numPart, 10) || 0;
+      });
+      
+      nextNumber = Math.max(...numbers) + 1;
+    }
+  }
+  
+  // Format: GD + DDMMYY + 001
+  const numberStr = nextNumber.toString().padStart(CONFIG.idConfig.numberLength, '0');
+  return baseId + numberStr;
+}
+
+// ================================================
+// 4. PHOTO HANDLING
+// ================================================
+
+/**
+ * Save visitor photo to Google Drive
+ * Returns the file URL for storing in the spreadsheet
+ */
+function saveVisitorPhoto(visitorId, photoBase64) {
+  try {
+    console.log('Saving photo for visitor:', visitorId);
+    
+    // Extract base64 data
+    let base64Data = photoBase64;
+    if (photoBase64.includes(',')) {
+      base64Data = photoBase64.split(',')[1];
+    }
+    
+    // Decode base64
+    const decoded = Utilities.base64Decode(base64Data);
+    const blob = Utilities.newBlob(decoded, 'image/jpeg', `${visitorId}.jpg`);
+    
+    // Get or create photo folder
+    let folder;
+    const folders = DriveApp.getFoldersByName(CONFIG.photoFolderName);
+    
+    if (folders.hasNext()) {
+      folder = folders.next();
+    } else {
+      folder = DriveApp.createFolder(CONFIG.photoFolderName);
+      console.log('Created photo folder:', CONFIG.photoFolderName);
+    }
+    
+    // Save file
+    const file = folder.createFile(blob);
+    
+    // Set file permissions to viewable by anyone with the link
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    
+    const fileUrl = file.getUrl();
+    console.log('Photo saved. File ID:', file.getId(), 'URL:', fileUrl);
+    
+    return {
+      success: true,
+      fileId: file.getId(),
+      fileUrl: fileUrl,
+      fileName: file.getName()
+    };
+    
+  } catch (error) {
+    console.error('Photo save error:', error);
+    throw error;
+  }
+}
+
+// ================================================
+// 5. SYSTEM STATUS & STATISTICS
+// ================================================
+
+/**
+ * Check system status
+ */
+function checkSystemStatus() {
+  try {
+    setupSystem();
+    
+    const ss = SpreadsheetApp.openById(CONFIG.sheetId);
+    const visitorSheet = ss.getSheetByName(CONFIG.mainSheet);
+    const lastRow = visitorSheet.getLastRow();
+    
+    // Get today's date for filtering
+    const today = Utilities.formatDate(new Date(), CONFIG.timeZone, 'dd/MM/yyyy');
+    
+    let totalToday = 0;
+    let totalCount = 0;
+    let activeCount = 0;
+    
+    if (lastRow > 1) {
+      // Get all data (columns: A=Visitor ID, I=Date, L=Status)
+      const data = visitorSheet.getRange(2, 1, lastRow - 1, 12).getValues();
+      totalCount = data.length;
+      
+      // Count today's visitors and active passes
+      data.forEach(row => {
+        const date = row[8]; // Column I (0-index)
+        const status = row[11]; // Column L (0-index)
+        
+        if (date === today) {
+          totalToday++;
+        }
+        if (status === 'Active') {
+          activeCount++;
+        }
+      });
+    }
+    
+    // Generate next visitor ID
+    const nextVisitorId = generateVisitorId(visitorSheet);
+    
+    return {
+      success: true,
+      nextVisitorId: nextVisitorId,
+      todayStats: {
+        totalToday: totalToday
+      },
+      sheetRows: totalCount,
+      activeCount: activeCount,
+      totalColumns: visitorSheet.getLastColumn()
+    };
+    
+  } catch (error) {
+    console.error('System status error:', error);
+    return {
+      success: false,
+      message: 'Error: ' + error.message,
+      nextVisitorId: 'GD' + Utilities.formatDate(new Date(), CONFIG.timeZone, 'ddMMyy') + '001'
+    };
+  }
+}
+
+// ================================================
+// 6. WEB APP ENTRY POINT
+// ================================================
+
+/**
+ * Web app entry point
+ */
+function doGet() {
+  return HtmlService.createTemplateFromFile('Index')
+    .evaluate()
+    .setTitle('Visitor Pass System - ' + CONFIG.companyName)
+    .setSandboxMode(HtmlService.SandboxMode.IFRAME)
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1.0');
+}
+
+/**
+ * Include HTML/CSS/JS files
+ */
+function include(filename) {
+  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+}
+
+// ================================================
+// 7. ADDITIONAL FUNCTIONS
+// ================================================
+
+/**
+ * Get photo URL for a specific visitor
+ * @param {string} visitorId - Visitor ID to lookup
+ * @return {Object} Photo URL information
+ */
+function getPhotoUrl(visitorId) {
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.sheetId);
+    const visitorSheet = ss.getSheetByName(CONFIG.mainSheet);
+    const lastRow = visitorSheet.getLastRow();
+    
+    if (lastRow <= 1) {
+      return { success: false, message: 'No data found' };
+    }
+    
+    // Get all data
+    const data = visitorSheet.getRange(2, 1, lastRow - 1, 15).getValues();
+    
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      if (row[0] === visitorId) { // Column A = Visitor ID
+        const photoUrl = row[14] || ''; // Column O = Photo Drive URL
+        
+        return {
+          success: true,
+          visitorId: visitorId,
+          photoUrl: photoUrl,
+          hasPhoto: row[13] === 'Yes', // Column N = Photo Available
+          rowNumber: i + 2 // +2 for header row
+        };
+      }
+    }
+    
+    return { success: false, message: 'Visitor ID not found' };
+    
+  } catch (error) {
+    console.error('Error getting photo URL:', error);
+    return { success: false, message: 'Error: ' + error.message };
+  }
+}
+
+/**
+ * Test function to verify photo saving
+ */
+function testPhotoSave() {
+  try {
+    // Create a test blob
+    const blob = Utilities.newBlob('Test photo content', 'text/plain', 'test.jpg');
+    
+    // Get or create photo folder
+    let folder;
+    const folders = DriveApp.getFoldersByName(CONFIG.photoFolderName);
+    
+    if (folders.hasNext()) {
+      folder = folders.next();
+    } else {
+      folder = DriveApp.createFolder(CONFIG.photoFolderName);
+    }
+    
+    // Save test file
+    const file = folder.createFile(blob);
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    
+    return {
+      success: true,
+      message: 'Test photo saved successfully',
+      fileUrl: file.getUrl(),
+      fileId: file.getId()
+    };
+    
+  } catch (error) {
+    return {
+      success: false,
+      message: 'Test failed: ' + error.toString()
+    };
+  }
+}
+
+/**
+ * Check if photo folder exists and is accessible
+ */
+function checkPhotoFolder() {
+  try {
+    let folderExists = false;
+    let folderUrl = '';
+    let folderName = '';
+    
+    const folders = DriveApp.getFoldersByName(CONFIG.photoFolderName);
+    
+    if (folders.hasNext()) {
+      const folder = folders.next();
+      folderExists = true;
+      folderUrl = folder.getUrl();
+      folderName = folder.getName();
+      
+      // Count files in folder
+      const files = folder.getFiles();
+      let fileCount = 0;
+      while (files.hasNext()) {
+        files.next();
+        fileCount++;
+      }
+      
+      return {
+        success: true,
+        folderExists: true,
+        folderName: folderName,
+        folderUrl: folderUrl,
+        fileCount: fileCount,
+        message: `Photo folder '${folderName}' exists with ${fileCount} files`
+      };
+    } else {
+      return {
+        success: false,
+        folderExists: false,
+        message: `Photo folder '${CONFIG.photoFolderName}' not found`
+      };
+    }
+    
+  } catch (error) {
+    return {
+      success: false,
+      folderExists: false,
+      message: 'Error checking photo folder: ' + error.toString()
+    };
+  }
+}
